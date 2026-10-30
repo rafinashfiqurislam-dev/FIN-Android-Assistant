@@ -1,36 +1,48 @@
-# FIN Android Starter — corrected project layout
+FIN – Offline Android Voice Assistant
 
-This is a starter scaffold, not a finished or verified voice assistant.
+FIN is a private Android voice assistant designed to process Bengali voice commands locally on the device.
 
-## Important: keep the folder paths
+Current Features
 
-Do not upload all files flat into the repository root. These two files have the same name but belong in different places:
-- `/build.gradle.kts`
-- `/app/build.gradle.kts`
+- Offline Bengali speech recognition using Sherpa-ONNX.
+- Local speech processing without Google, Gemini, or cloud-based speech recognition.
+- Foreground microphone service.
+- Open supported apps using voice commands.
+- Find contacts by name.
+- Open the phone dialer for calls.
+- Open the SMS composer for messages.
 
-The GitHub Actions workflow belongs at:
-- `/.github/workflows/build-apk.yml`
+Technology
 
-The Android source files belong under:
-- `/app/src/main/AndroidManifest.xml`
-- `/app/src/main/java/com/fin/assistant/MainActivity.kt`
-- `/app/src/main/java/com/fin/assistant/FinVoiceService.kt`
+- Kotlin
+- Android SDK
+- Sherpa-ONNX
+- Bengali Zipformer streaming model
+- Android Foreground Service
 
-## Build from an Android phone
+Build
 
-The easiest phone-only route is:
-1. Upload this ZIP file to the root of a new GitHub repository (do not extract and flatten its contents).
-2. In GitHub, create a new file at `.github/workflows/build-from-zip.yml`.
-3. Paste the bootstrap workflow supplied separately with this project.
-4. Open Actions and run "Build FIN from uploaded ZIP".
-5. Download the `FIN-debug-apk` artifact from the completed run and extract it on your phone.
+The GitHub Actions workflow automatically downloads the required Sherpa-ONNX libraries and Bengali model, then builds a Debug APK.
 
-## Known limitations
+To download the APK:
 
-- This starter does not yet implement a reliable "Hey FIN" wake-word detector.
-- It does not yet provide reliable mixed Bangla-English offline speech recognition. The prototype requests Bengali (`bn-BD`) recognition from Android's on-device speech provider, if available.
-- It does not directly send WhatsApp messages. The prototype's message handling is incomplete; SMS opens the system composer.
-- Calls open the dialer for user confirmation; they are not silently placed.
-- The Android OS may show a microphone privacy indicator and a foreground-service notification while listening. These must not be hidden.
-- Battery restrictions and Android vendor policies can interrupt background listening.
-- The APK has not been built or tested on the user's phone yet. Do not treat it as production-ready.
+1. Open the repository's Actions tab.
+2. Select a successful workflow run.
+3. Find the "FIN-Debug-APK" artifact.
+4. Download the artifact.
+
+Current Limitations
+
+- English speech recognition is not yet implemented.
+- Wake-word detection is not yet implemented.
+- WhatsApp direct messaging is not yet implemented.
+- Calls and SMS require user confirmation through Android apps.
+- Device-level testing is still required.
+
+Privacy
+
+Speech recognition is designed to run locally using bundled model files. FIN does not intentionally send voice recordings to a cloud speech-recognition service.
+
+Project Status
+
+Early development. Build success does not guarantee that all features work correctly on every Android device.
