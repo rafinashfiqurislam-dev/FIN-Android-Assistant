@@ -1,0 +1,159 @@
+
+package com.fin.assistant
+
+import android.content.ContentValues
+import android.content.Context
+import android.database.sqlite.SQLiteDatabase
+import android.database.sqlite.SQLiteOpenHelper
+
+class FinExperienceStore(context: Context) :
+    SQLiteOpenHelper(context.applicationContext, "fin_experience.db", null, 1) {
+
+    override fun onCreate(db: SQLiteDatabase) {
+        db.execSQL("""
+            CREATE TABLE experiences (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                transcript TEXT NOT NULL,
+                intent TEXT NOT NULL,
+                outcome TEXT NOT NULL,
+                correction TEXT DEFAULT '',
+                created_at INTEGER NOT NULL
+            )
+        """.trimIndent())
+
+        db.execSQL("""
+            CREATE TABLE learned_rules (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                trigger_text TEXT NOT NULL,
+                intent TEXT NOT NULL,
+                evidence_count INTEGER NOT NULL DEFAULT 1,
+                success_count INTEGER NOT NULL DEFAULT 0,
+                confidence REAL NOT NULL DEFAULT 0,
+                updated_at INTEGER NOT NULL,
+                UNIQUE(trigger_text, intent)
+            )
+        """.trimIndent())
+    }
+
+    override fun onUpgrade(
+        db: SQLiteDatabase,
+        oldVersion: Int,
+        newVersion: Int
+    ) {
+        // Preserve existing learning data.
+    }
+
+    @Synchronized
+    fun recordExperience(
+        transcript: String,
+        intent: String,
+        outcome: String,
+        correction: String = ""
+    ): Long {
+        if (transcript.isBlank()) return -1L
+
+        val values = ContentValues().apply {
+            put("transcript", transcript.take(1000))
+            put("intent", intent.take(100))
+            put("outcome", outcome.take(100))
+            put("correction", correction.take(1000))
+            put("created_at", System.currentTimeMillis())
+        }
+
+        return writableDatabase.insert("experiences", null, values)
+    }
+
+    @Synchronized
+    fun recordRuleEvidence(
+        trigger: String,
+        intent: String,
+        successful: Boolean
+    ): Double {
+        val key = trigger.trim().lowercase()
+        if (key.isEmpty() || intent.isBlank()) return 0.0
+
+        val db = writableDatabase
+
+        val old = db.rawQuery(
+            """
+            SELECT evidence_count, success_count
+            FROM learned_rules
+            WHERE trigger_text = ? AND intent = ?
+            """.trimIndent(),
+            arrayOf(key, intent)
+        ).use { cursor ->
+            if (cursor.moveToFirst()) {
+                cursor.getInt(0) to cursor.getInt(1)
+            } else null
+        }
+
+        val evidence = (old?.first ?: 0) + 1
+        val successes = (old?.second ?: 0) +
+            if (successful) 1 else 0
+
+        val confidence = (successes + 1.0) / (evidence + 2.0)
+
+        val values = ContentValues().apply {
+            put("trigger_text", key.take(300))
+            put("intent", intent.take(100))
+            put("evidence_count", evidence)
+            put("success_count", successes)
+            put("confidence", confidence)
+            put("updated_at", System.currentTimeMillis())
+        }
+
+        db.insertWithOnConflict(
+            "learned_rules",
+            null,
+            values,
+            SQLiteDatabase.CONFLICT_REPLACE
+        )
+
+        return confidence
+    }
+
+    fun findMatchingRules(
+        text: String,
+        minimumConfidence: Double = 0.75
+    ): List<Pair<String, String>> {
+        val input = text.trim().lowercase()
+        if (input.isEmpty()) return emptyList()
+
+        val matches = mutableListOf<Pair<String, String>>()
+
+        readableDatabase.rawQuery(
+            """
+            SELECT trigger_text, intent
+            FROM learned_rules
+            WHERE confidence >= ?
+            ORDER BY confidence DESC
+            LIMIT 30
+            """.trimIndent(),
+            arrayOf(minimumConfidence.toString())
+        ).use { cursor ->
+            while (cursor.moveToNext()) {
+                val trigger = cursor.getString(0)
+                val intent = cursor.getString(1)
+
+                if (input.contains(trigger)) {
+                    matches.add(trigger to intent)
+                }
+            }
+        }
+
+        return matches
+    }
+
+    @Synchronized
+    fun clearLearningData() {
+        writableDatabase.beginTransaction()
+        try {
+            writableDatabase.delete("experiences", null, null)
+            writableDatabase.delete("learned_rules", null, null)
+            writableDatabase.setTransactionSuccessful()
+        } finally {
+            writableDatabase.endTransaction()
+        }
+    }
+    }
+    
