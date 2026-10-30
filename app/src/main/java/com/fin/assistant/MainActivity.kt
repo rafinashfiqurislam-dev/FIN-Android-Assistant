@@ -1,4 +1,3 @@
-
 package com.fin.assistant
 
 import android.Manifest
@@ -10,7 +9,6 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
-import android.view.Gravity
 import android.view.View
 import android.widget.Button
 import android.widget.LinearLayout
@@ -27,6 +25,15 @@ class MainActivity : Activity() {
 
     private lateinit var permissionStatus: TextView
     private lateinit var engineStatus: TextView
+
+    private val requiredPermissions = arrayOf(
+        Manifest.permission.RECORD_AUDIO,
+        Manifest.permission.READ_CONTACTS
+    )
+
+    companion object {
+        private const val PERMISSION_REQUEST_CODE = 501
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -65,10 +72,7 @@ class MainActivity : Activity() {
         val scroll = ScrollView(this)
         scroll.addView(root)
 
-        root.addView(
-            text("FIN", 38f, white, true),
-            LinearLayout.LayoutParams(-1, -2)
-        )
+        root.addView(text("FIN", 38f, white, true))
 
         root.addView(
             text("YOUR PERSONAL OFFLINE ASSISTANT", 11f, muted).apply {
@@ -82,20 +86,29 @@ class MainActivity : Activity() {
 
         val engineCard = card()
         engineCard.addView(text("VOICE ENGINE", 12f, muted, true))
-        engineStatus = text("OFFLINE ENGINE — INTEGRATION PENDING", 15f, white, true)
+
+        engineStatus = text("BENGALI OFFLINE ENGINE", 15f, white, true)
         engineStatus.setPadding(0, dp(12), 0, dp(4))
         engineCard.addView(engineStatus)
+
         engineCard.addView(
-            text("FIN will process voice locally after the offline engine is connected.", 12f, muted)
+            text(
+                "Voice recognition is designed to run locally on this device.",
+                12f,
+                muted
+            )
         )
+
         root.addView(engineCard)
         root.addView(space(12))
 
         val permissionCard = card()
         permissionCard.addView(text("PERMISSIONS", 12f, muted, true))
+
         permissionStatus = text("", 14f, white)
         permissionStatus.setPadding(0, dp(12), 0, 0)
         permissionCard.addView(permissionStatus)
+
         root.addView(permissionCard)
         root.addView(space(22))
 
@@ -113,25 +126,28 @@ class MainActivity : Activity() {
         root.addView(space(10))
 
         root.addView(actionButton("ACTIVATE FIN") {
-            Toast.makeText(
-                this,
-                "Offline voice engine integration is not ready yet.",
-                Toast.LENGTH_LONG
-            ).show()
+            activateFin()
         })
 
         root.addView(space(10))
 
         root.addView(actionButton("STOP FIN") {
             stopService(Intent(this, FinVoiceService::class.java))
-            Toast.makeText(this, "FIN service stopped.", Toast.LENGTH_SHORT).show()
+            engineStatus.text = "VOICE ENGINE — STOPPED"
+            Toast.makeText(
+                this,
+                "FIN service stopped.",
+                Toast.LENGTH_SHORT
+            ).show()
         })
 
         root.addView(space(28))
+
         root.addView(
             text(
-                "PRIVACY FIRST\nVoice processing is planned to run on your device. " +
-                    "Microphone access will be indicated by Android.",
+                "PRIVACY FIRST\n" +
+                    "Voice processing is designed to run on your device. " +
+                    "Android displays microphone access indicators while the microphone is active.",
                 12f,
                 muted
             )
@@ -139,6 +155,81 @@ class MainActivity : Activity() {
 
         setContentView(scroll)
         refreshPermissions()
+    }
+
+    private fun activateFin() {
+        val missingPermissions = requiredPermissions.filter {
+            checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED
+        }
+
+        if (missingPermissions.isNotEmpty()) {
+            requestPermissions(
+                missingPermissions.toTypedArray(),
+                PERMISSION_REQUEST_CODE
+            )
+            return
+        }
+
+        startFinService()
+    }
+
+    private fun startFinService() {
+        try {
+            val intent = Intent(this, FinVoiceService::class.java)
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                startForegroundService(intent)
+            } else {
+                startService(intent)
+            }
+
+            engineStatus.text = "VOICE ENGINE — STARTING"
+
+            Toast.makeText(
+                this,
+                "FIN voice service is starting.",
+                Toast.LENGTH_SHORT
+            ).show()
+
+        } catch (e: Exception) {
+            engineStatus.text = "VOICE ENGINE — START FAILED"
+
+            Toast.makeText(
+                this,
+                "Could not start FIN: ${e.message}",
+                Toast.LENGTH_LONG
+            ).show()
+        }
+    }
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray
+    ) {
+        super.onRequestPermissionsResult(
+            requestCode,
+            permissions,
+            grantResults
+        )
+
+        if (requestCode == PERMISSION_REQUEST_CODE) {
+            refreshPermissions()
+
+            val allGranted = requiredPermissions.all {
+                checkSelfPermission(it) == PackageManager.PERMISSION_GRANTED
+            }
+
+            if (allGranted) {
+                startFinService()
+            } else {
+                Toast.makeText(
+                    this,
+                    "Microphone and Contacts permissions are required for FIN.",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+        }
     }
 
     private fun space(height: Int): View =
@@ -159,24 +250,32 @@ class MainActivity : Activity() {
     }
 
     private fun refreshPermissions() {
+        if (!::permissionStatus.isInitialized) return
+
         val items = mutableListOf(
             "Microphone" to Manifest.permission.RECORD_AUDIO,
             "Contacts" to Manifest.permission.READ_CONTACTS
         )
 
         if (Build.VERSION.SDK_INT >= 33) {
-            items.add("Notifications" to Manifest.permission.POST_NOTIFICATIONS)
+            items.add(
+                "Notifications" to Manifest.permission.POST_NOTIFICATIONS
+            )
         }
 
-        permissionStatus.text = items.joinToString("\n\n") { (name, permission) ->
+        permissionStatus.text = items.joinToString("\n\n") {
+            (name, permission) ->
+
             val granted = checkSelfPermission(permission) ==
                 PackageManager.PERMISSION_GRANTED
-            "${if (granted) "✓" else "○"}  $name: ${if (granted) "Allowed" else "Not allowed"}"
+
+            "${if (granted) "✓" else "○"}  $name: " +
+                if (granted) "Allowed" else "Not allowed"
         }
     }
 
     override fun onResume() {
         super.onResume()
-        if (::permissionStatus.isInitialized) refreshPermissions()
+        refreshPermissions()
     }
 }
