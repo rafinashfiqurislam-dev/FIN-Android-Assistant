@@ -1,125 +1,182 @@
+
 package com.fin.assistant
 
 import android.Manifest
 import android.app.Activity
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Color
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import android.view.Gravity
+import android.view.View
 import android.widget.Button
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.TextView
-import android.graphics.Color
+import android.widget.Toast
 
 class MainActivity : Activity() {
-    private val permissions = mutableListOf(
-        Manifest.permission.RECORD_AUDIO,
-        Manifest.permission.READ_CONTACTS,
-        Manifest.permission.CALL_PHONE
-    ).apply {
-        if (Build.VERSION.SDK_INT >= 33) add(Manifest.permission.POST_NOTIFICATIONS)
-    }.toTypedArray()
 
-    private lateinit var status: TextView
+    private val bg = Color.rgb(10, 10, 10)
+    private val panel = Color.rgb(25, 25, 25)
+    private val white = Color.WHITE
+    private val muted = Color.LTGRAY
+
+    private lateinit var permissionStatus: TextView
+    private lateinit var engineStatus: TextView
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        buildUi()
-        refreshStatus()
+        buildDashboard()
     }
 
-    private fun buildUi() {
-        val page = LinearLayout(this).apply {
+    private fun dp(value: Int): Int =
+        (value * resources.displayMetrics.density).toInt()
+
+    private fun text(
+        value: String,
+        size: Float,
+        color: Int,
+        bold: Boolean = false
+    ) = TextView(this).apply {
+        text = value
+        textSize = size
+        setTextColor(color)
+        if (bold) setTypeface(null, android.graphics.Typeface.BOLD)
+    }
+
+    private fun card(): LinearLayout =
+        LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(28, 36, 28, 28)
-            setBackgroundColor(Color.WHITE)
+            setPadding(dp(18), dp(16), dp(18), dp(16))
+            setBackgroundColor(panel)
         }
-        val title = TextView(this).apply {
-            text = "FIN"
-            textSize = 36f
-            setTextColor(Color.BLACK)
-            gravity = Gravity.CENTER
-        }
-        val subtitle = TextView(this).apply {
-            text = "YOUR SILENT PERSONAL ASSISTANT"
-            textSize = 11f
-            setTextColor(Color.DKGRAY)
-            gravity = Gravity.CENTER
-            setPadding(0, 4, 0, 32)
-        }
-        status = TextView(this).apply {
-            textSize = 15f
-            setTextColor(Color.BLACK)
-            setPadding(0, 12, 0, 24)
-        }
-        val settings = Button(this).apply {
-            text = "OPEN ANDROID PERMISSION SETTINGS"
-            setOnClickListener {
-                startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
-                    Uri.parse("package:$packageName")))
-            }
-        }
-        val activate = Button(this).apply {
-            text = "ACTIVATE FIN"
-            setOnClickListener { activateFin() }
-        }
-        val stop = Button(this).apply {
-            text = "STOP FIN"
-            setOnClickListener { stopService(Intent(this@MainActivity, FinVoiceService::class.java)); refreshStatus() }
-        }
-        val note = TextView(this).apply {
-            text = "FIN uses your phone's on-device speech recognition when supported. Android may show a microphone privacy indicator and an ongoing service notification."
-            textSize = 12f
-            setTextColor(Color.DKGRAY)
-            setPadding(0, 28, 0, 0)
-        }
-        page.addView(title)
-        page.addView(subtitle)
-        page.addView(status)
-        page.addView(settings)
-        page.addView(activate)
-        page.addView(stop)
-        page.addView(note)
-        setContentView(page)
-    }
 
-    private fun activateFin() {
-        val missing = permissions.filter {
-            checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED
+    private fun buildDashboard() {
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(bg)
+            setPadding(dp(20), dp(24), dp(20), dp(24))
         }
-        if (missing.isNotEmpty()) {
-            requestPermissions(missing.toTypedArray(), 100)
-            return
-        }
-        if (Build.VERSION.SDK_INT >= 31 &&
-            !android.speech.SpeechRecognizer.isOnDeviceRecognitionAvailable(this)) {
-            status.text = "On-device speech recognition is not available on this phone. FIN cannot start offline listening yet."
-            return
-        }
-        val intent = Intent(this, FinVoiceService::class.java)
-        if (Build.VERSION.SDK_INT >= 26) startForegroundService(intent) else startService(intent)
-        status.text = "FIN activation requested."
-    }
 
-    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        refreshStatus()
-        if (requestCode == 100 && grantResults.isNotEmpty() &&
-            grantResults.all { it == PackageManager.PERMISSION_GRANTED }) activateFin()
-    }
+        val scroll = ScrollView(this)
+        scroll.addView(root)
 
-    private fun refreshStatus() {
-        val names = listOf(
-            "Microphone" to Manifest.permission.RECORD_AUDIO,
-            "Contacts" to Manifest.permission.READ_CONTACTS,
-            "Phone calls" to Manifest.permission.CALL_PHONE
+        root.addView(
+            text("FIN", 38f, white, true),
+            LinearLayout.LayoutParams(-1, -2)
         )
-        status.text = names.joinToString("\n") { (label, permission) ->
-            val ok = checkSelfPermission(permission) == PackageManager.PERMISSION_GRANTED
-            "${if (ok) "✓" else "✗"}  $label"
+
+        root.addView(
+            text("YOUR PERSONAL OFFLINE ASSISTANT", 11f, muted).apply {
+                letterSpacing = 0.12f
+                setPadding(0, dp(4), 0, dp(28))
+            }
+        )
+
+        root.addView(text("SYSTEM OVERVIEW", 12f, muted, true))
+        root.addView(space(12))
+
+        val engineCard = card()
+        engineCard.addView(text("VOICE ENGINE", 12f, muted, true))
+        engineStatus = text("OFFLINE ENGINE — INTEGRATION PENDING", 15f, white, true)
+        engineStatus.setPadding(0, dp(12), 0, dp(4))
+        engineCard.addView(engineStatus)
+        engineCard.addView(
+            text("FIN will process voice locally after the offline engine is connected.", 12f, muted)
+        )
+        root.addView(engineCard)
+        root.addView(space(12))
+
+        val permissionCard = card()
+        permissionCard.addView(text("PERMISSIONS", 12f, muted, true))
+        permissionStatus = text("", 14f, white)
+        permissionStatus.setPadding(0, dp(12), 0, 0)
+        permissionCard.addView(permissionStatus)
+        root.addView(permissionCard)
+        root.addView(space(22))
+
+        root.addView(text("CONTROLS", 12f, muted, true))
+        root.addView(space(10))
+
+        root.addView(actionButton("MANAGE PERMISSIONS") {
+            val intent = Intent(
+                Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                Uri.parse("package:$packageName")
+            )
+            startActivity(intent)
+        })
+
+        root.addView(space(10))
+
+        root.addView(actionButton("ACTIVATE FIN") {
+            Toast.makeText(
+                this,
+                "Offline voice engine integration is not ready yet.",
+                Toast.LENGTH_LONG
+            ).show()
+        })
+
+        root.addView(space(10))
+
+        root.addView(actionButton("STOP FIN") {
+            stopService(Intent(this, FinVoiceService::class.java))
+            Toast.makeText(this, "FIN service stopped.", Toast.LENGTH_SHORT).show()
+        })
+
+        root.addView(space(28))
+        root.addView(
+            text(
+                "PRIVACY FIRST\nVoice processing is planned to run on your device. " +
+                    "Microphone access will be indicated by Android.",
+                12f,
+                muted
+            )
+        )
+
+        setContentView(scroll)
+        refreshPermissions()
+    }
+
+    private fun space(height: Int): View =
+        View(this).apply {
+            layoutParams = LinearLayout.LayoutParams(1, dp(height))
         }
+
+    private fun actionButton(
+        label: String,
+        action: () -> Unit
+    ): Button = Button(this).apply {
+        text = label
+        isAllCaps = false
+        setTextColor(white)
+        setBackgroundColor(Color.rgb(45, 45, 45))
+        setOnClickListener { action() }
+        layoutParams = LinearLayout.LayoutParams(-1, dp(54))
+    }
+
+    private fun refreshPermissions() {
+        val items = mutableListOf(
+            "Microphone" to Manifest.permission.RECORD_AUDIO,
+            "Contacts" to Manifest.permission.READ_CONTACTS
+        )
+
+        if (Build.VERSION.SDK_INT >= 33) {
+            items.add("Notifications" to Manifest.permission.POST_NOTIFICATIONS)
+        }
+
+        permissionStatus.text = items.joinToString("\n\n") { (name, permission) ->
+            val granted = checkSelfPermission(permission) ==
+                PackageManager.PERMISSION_GRANTED
+            "${if (granted) "✓" else "○"}  $name: ${if (granted) "Allowed" else "Not allowed"}"
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (::permissionStatus.isInitialized) refreshPermissions()
     }
 }
