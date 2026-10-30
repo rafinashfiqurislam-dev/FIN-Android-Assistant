@@ -6,6 +6,14 @@ import android.content.Context
 import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
 
+data class FinExperience(
+    val transcript: String,
+    val intent: String,
+    val outcome: String,
+    val correction: String,
+    val createdAt: Long
+)
+
 class FinExperienceStore(context: Context) :
     SQLiteOpenHelper(context.applicationContext, "fin_experience.db", null, 1) {
 
@@ -144,6 +152,35 @@ class FinExperienceStore(context: Context) :
         return matches
     }
 
+    fun getRecentExperiences(limit: Int = 20): List<FinExperience> {
+        val safeLimit = limit.coerceIn(1, 200)
+        val result = mutableListOf<FinExperience>()
+
+        readableDatabase.rawQuery(
+            """
+            SELECT transcript, intent, outcome, correction, created_at
+            FROM experiences
+            ORDER BY created_at DESC
+            LIMIT ?
+            """.trimIndent(),
+            arrayOf(safeLimit.toString())
+        ).use { cursor ->
+            while (cursor.moveToNext()) {
+                result.add(
+                    FinExperience(
+                        transcript = cursor.getString(0),
+                        intent = cursor.getString(1),
+                        outcome = cursor.getString(2),
+                        correction = cursor.getString(3),
+                        createdAt = cursor.getLong(4)
+                    )
+                )
+            }
+        }
+
+        return result
+    }
+
     @Synchronized
     fun clearLearningData() {
         writableDatabase.beginTransaction()
@@ -155,4 +192,5 @@ class FinExperienceStore(context: Context) :
             writableDatabase.endTransaction()
         }
     }
-}
+    }
+    
