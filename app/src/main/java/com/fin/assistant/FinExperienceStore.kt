@@ -40,7 +40,7 @@ class FinExperienceStore(context: Context) :
         oldVersion: Int,
         newVersion: Int
     ) {
-        // Preserve existing learning data.
+        // Future database migrations.
     }
 
     @Synchronized
@@ -155,5 +155,4 @@ class FinExperienceStore(context: Context) :
             writableDatabase.endTransaction()
         }
     }
-    }
-    
+}
