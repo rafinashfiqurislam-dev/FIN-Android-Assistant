@@ -30,19 +30,14 @@ jobs:
           wget -q https://github.com/k2-fsa/sherpa-onnx/releases/download/v2.0.1/sherpa-onnx-v2.0.1-android.tar.bz2
           tar -xjf sherpa-onnx-v2.0.1-android.tar.bz2
 
-      - name: Add Sherpa native libraries
+      - name: Install Sherpa native libraries
         run: |
           mkdir -p app/src/main/jniLibs
           cp -R jniLibs/* app/src/main/jniLibs/
 
-          echo "Installed native libraries:"
-          find app/src/main/jniLibs -type f
-
-      - name: Download Sherpa Kotlin API
+      - name: Install Sherpa Kotlin API
         run: |
-          git clone \
-            --depth 1 \
-            --branch v2.0.1 \
+          git clone --depth 1 --branch v2.0.1 \
             https://github.com/k2-fsa/sherpa-onnx.git \
             /tmp/sherpa-onnx
 
@@ -51,14 +46,30 @@ jobs:
           cp /tmp/sherpa-onnx/sherpa-onnx/kotlin-api/*.kt \
             app/src/main/java/com/k2fsa/sherpa/onnx/
 
-          echo "Installed Kotlin API files:"
-          find app/src/main/java/com/k2fsa/sherpa/onnx -type f
-
-      - name: Verify Sherpa integration files
+      - name: Download Bengali offline speech model
         run: |
-          test -d app/src/main/jniLibs
+          MODEL_DIR="sherpa-onnx-streaming-zipformer-bn-vosk-2026-02-09"
+
+          wget -q \
+            "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/${MODEL_DIR}.tar.bz2"
+
+          tar -xjf "${MODEL_DIR}.tar.bz2"
+
+          mkdir -p app/src/main/assets/${MODEL_DIR}
+
+          cp ${MODEL_DIR}/encoder.onnx app/src/main/assets/${MODEL_DIR}/
+          cp ${MODEL_DIR}/decoder.onnx app/src/main/assets/${MODEL_DIR}/
+          cp ${MODEL_DIR}/joiner.onnx app/src/main/assets/${MODEL_DIR}/
+          cp ${MODEL_DIR}/tokens.txt app/src/main/assets/${MODEL_DIR}/
+          cp ${MODEL_DIR}/bpe.model app/src/main/assets/${MODEL_DIR}/
+
+      - name: Verify offline model and native engine
+        run: |
+          test -s app/src/main/assets/sherpa-onnx-streaming-zipformer-bn-vosk-2026-02-09/encoder.onnx
+          test -s app/src/main/assets/sherpa-onnx-streaming-zipformer-bn-vosk-2026-02-09/decoder.onnx
+          test -s app/src/main/assets/sherpa-onnx-streaming-zipformer-bn-vosk-2026-02-09/joiner.onnx
+          test -s app/src/main/assets/sherpa-onnx-streaming-zipformer-bn-vosk-2026-02-09/tokens.txt
           test -n "$(find app/src/main/jniLibs -name '*.so' -print -quit)"
-          test -n "$(find app/src/main/java/com/k2fsa/sherpa/onnx -name '*.kt' -print -quit)"
 
       - name: Build FIN Debug APK
         run: gradle :app:assembleDebug
