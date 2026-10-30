@@ -5,4 +5,4 @@ dependencyResolutionManagement {
 }
 rootProject.name = "FIN"
 include(":app")
-project(":app").buildFileName = "app-build.gradle.kts"
+project(":app").buildFileName = "build.gradle.kts"
