@@ -1,4 +1,3 @@
-
 package com.fin.assistant
 
 /**
@@ -43,25 +42,30 @@ class FinCommandUnderstanding(
             )
         }
 
-        // 2. Use basic built-in command recognition.
+        // 2. Recognize built-in commands.
         val intent = when {
             containsAny(
                 text,
                 "কল",
-                "call"
+                "call",
+                "ফোন করো",
+                "ফোন দাও"
             ) -> CALL_CONTACT
 
             containsAny(
                 text,
                 "মেসেজ",
                 "বার্তা",
-                "message"
+                "message",
+                "এসএমএস"
             ) -> MESSAGE_CONTACT
 
             containsAny(
                 text,
                 "খোলো",
+                "খুলে দাও",
                 "চালু",
+                "ওপেন",
                 "open"
             ) -> OPEN_APP
 
