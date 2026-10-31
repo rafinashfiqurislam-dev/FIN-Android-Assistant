@@ -206,7 +206,8 @@ class FinExperienceStore(context: Context) :
             db.delete("experiences", null, null)
             db.delete("learned_rules", null, null)
             db.setTransactionSuccessful()
-        } finally {
+                      } finally {
             db.endTransaction()
         }
     }
+}
