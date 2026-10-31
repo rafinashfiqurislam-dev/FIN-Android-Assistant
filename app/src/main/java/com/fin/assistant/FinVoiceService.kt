@@ -27,13 +27,19 @@ class FinVoiceService : Service() {
 
     private var audioRecord: AudioRecord? = null
     private var recognizer: OnlineRecognizer? = null
-    @Volatile private var isRunning = false
+
+    @Volatile
+    private var isRunning = false
+
     private var audioThread: Thread? = null
 
     private val mainHandler = Handler(Looper.getMainLooper())
 
     private lateinit var learningEngine: FinLearningEngine
     private lateinit var commandUnderstanding: FinCommandUnderstanding
+    private lateinit var correctionSession: FinCorrectionSession
+
+    private var lastRecognizedCommand: String? = null
 
     private val modelDir =
         "sherpa-onnx-streaming-zipformer-bn-vosk-2026-02-09"
@@ -43,6 +49,7 @@ class FinVoiceService : Service() {
 
         learningEngine = FinLearningEngine(this)
         commandUnderstanding = FinCommandUnderstanding(learningEngine)
+        correctionSession = FinCorrectionSession(learningEngine)
 
         createNotificationChannel()
         startForeground(7, notification())
@@ -190,6 +197,7 @@ class FinVoiceService : Service() {
         synchronized(this) {
             if (recognizer === engine) {
                 recognizer = null
+
                 try {
                     engine.release()
                 } catch (_: Exception) {
@@ -201,6 +209,37 @@ class FinVoiceService : Service() {
     private fun handleCommand(raw: String) {
         val text = raw.lowercase().trim()
         if (text.isBlank()) return
+
+        // Process an active correction session first.
+        if (correctionSession.isActive()) {
+            val response = correctionSession.accept(raw)
+
+            showMessage(response.message)
+            return
+        }
+
+        // Detect an explicit correction request.
+        val correctionRequested = containsAny(
+            text,
+            "ভুল হয়েছে",
+            "ভুল হয়েছে",
+            "এটা ভুল",
+            "তুমি ভুল বুঝেছ",
+            "সঠিক বুঝোনি"
+        )
+
+        if (correctionRequested) {
+            val previousCommand = lastRecognizedCommand
+
+            if (previousCommand == null) {
+                showMessage("There is no previous command to correct.")
+                return
+            }
+
+            val response = correctionSession.begin(previousCommand)
+            showMessage(response.message)
+            return
+        }
 
         val understood = commandUnderstanding.understand(raw)
 
@@ -264,6 +303,7 @@ class FinVoiceService : Service() {
                 if (!openVerb || app == null) {
                     recordOutcome(raw, "UNKNOWN", false)
                     showMessage("Please specify an app to open")
+                    lastRecognizedCommand = raw
                     return
                 }
 
@@ -291,6 +331,7 @@ class FinVoiceService : Service() {
                 if (!callVerb) {
                     recordOutcome(raw, "UNKNOWN", false)
                     showMessage("Please say who you want to call")
+                    lastRecognizedCommand = raw
                     return
                 }
 
@@ -311,6 +352,7 @@ class FinVoiceService : Service() {
                 if (!messageVerb) {
                     recordOutcome(raw, "UNKNOWN", false)
                     showMessage("Please specify a contact")
+                    lastRecognizedCommand = raw
                     return
                 }
 
@@ -335,6 +377,9 @@ class FinVoiceService : Service() {
         }
 
         recordOutcome(raw, intentName, successful)
+
+        // Keep the latest command available for correction.
+        lastRecognizedCommand = raw
     }
 
     private fun containsPhrase(
@@ -343,7 +388,11 @@ class FinVoiceService : Service() {
     ): Boolean {
         val escaped = Regex.escape(phrase)
 
-        val pattern = if (phrase.any { it in 'a'..'z' || it in 'A'..'Z' }) {
+        val pattern = if (
+            phrase.any {
+                it in 'a'..'z' || it in 'A'..'Z'
+            }
+        ) {
             Regex(
                 "(?<![a-z0-9])$escaped(?![a-z0-9])",
                 RegexOption.IGNORE_CASE
@@ -514,6 +563,7 @@ class FinVoiceService : Service() {
 
     override fun onDestroy() {
         isRunning = false
+        correctionSession.cancel()
 
         val recorder = audioRecord
         audioRecord = null
@@ -537,6 +587,7 @@ class FinVoiceService : Service() {
         }
 
         val worker = audioThread
+
         if (worker == null || !worker.isAlive) {
             recognizer?.let {
                 releaseRecognizerSafely(it)
