@@ -11,7 +11,9 @@ import android.media.AudioRecord
 import android.media.MediaRecorder
 import android.net.Uri
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.provider.ContactsContract
 import android.widget.Toast
 import com.k2fsa.sherpa.onnx.FeatureConfig
@@ -28,11 +30,18 @@ class FinVoiceService : Service() {
     private var isRunning = false
     private var audioThread: Thread? = null
 
+    private val mainHandler = Handler(Looper.getMainLooper())
+
+    private lateinit var learningEngine: FinLearningEngine
+
     private val modelDir =
         "sherpa-onnx-streaming-zipformer-bn-vosk-2026-02-09"
 
     override fun onCreate() {
         super.onCreate()
+
+        learningEngine = FinLearningEngine(this)
+
         createNotificationChannel()
         startForeground(7, notification())
 
@@ -109,6 +118,7 @@ class FinVoiceService : Service() {
 
     private fun processAudio(recorder: AudioRecord) {
         val stream = recognizer?.createStream() ?: return
+
         val shortBuffer = ShortArray(1600)
         val floatBuffer = FloatArray(1600)
 
@@ -138,11 +148,14 @@ class FinVoiceService : Service() {
                 }
 
                 if (engine.isEndpoint(stream)) {
-                    val result = engine.getResult(stream)
-                    val command = result.text.trim()
+                    val command = engine.getResult(stream).text.trim()
 
                     if (command.isNotBlank()) {
-                        handleCommand(command)
+                        mainHandler.post {
+                            if (isRunning) {
+                                handleCommand(command)
+                            }
+                        }
                     }
 
                     engine.reset(stream)
@@ -169,6 +182,9 @@ class FinVoiceService : Service() {
             "মেসেঞ্জার" to "com.facebook.orca"
         )
 
+        var intentName = "UNKNOWN"
+        var successful = false
+
         val app = apps.entries.firstOrNull {
             text.contains(it.key)
         }
@@ -178,19 +194,31 @@ class FinVoiceService : Service() {
              text.contains("খোলো") ||
              text.contains("চালু"))) {
 
+            intentName = "OPEN_APP"
+
             val launch = packageManager
                 .getLaunchIntentForPackage(app.value)
 
             if (launch != null) {
                 launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                startActivity(launch)
+
+                try {
+                    startActivity(launch)
+                    successful = true
+                } catch (e: Exception) {
+                    showMessage("Could not open app")
+                }
             } else {
                 showMessage("App not installed")
             }
+
+            recordOutcome(raw, intentName, successful)
             return
         }
 
         if (text.contains("call") || text.contains("কল")) {
+            intentName = "CALL_CONTACT"
+
             val name = text
                 .replace("call", "")
                 .replace("কল", "")
@@ -198,13 +226,17 @@ class FinVoiceService : Service() {
                 .replace("কর", "")
                 .trim()
 
-            callContact(name)
+            successful = callContact(name)
+
+            recordOutcome(raw, intentName, successful)
             return
         }
 
         if (text.contains("message") ||
             text.contains("মেসেজ") ||
             text.contains("বার্তা")) {
+
+            intentName = "MESSAGE_CONTACT"
 
             val name = text
                 .replace("message", "")
@@ -215,7 +247,29 @@ class FinVoiceService : Service() {
                 .replace("কর", "")
                 .trim()
 
-            messageContact(name)
+            successful = messageContact(name)
+
+            recordOutcome(raw, intentName, successful)
+            return
+        }
+
+        recordOutcome(raw, intentName, false)
+        showMessage("Command not understood")
+    }
+
+    private fun recordOutcome(
+        command: String,
+        intent: String,
+        successful: Boolean
+    ) {
+        try {
+            learningEngine.observeOutcome(
+                userCommand = command,
+                detectedIntent = intent,
+                successful = successful
+            )
+        } catch (e: Exception) {
+            showMessage("Learning storage error")
         }
     }
 
@@ -248,12 +302,12 @@ class FinVoiceService : Service() {
         return null
     }
 
-    private fun callContact(name: String) {
+    private fun callContact(name: String): Boolean {
         val number = findNumber(name)
 
         if (number == null) {
             showMessage("Contact not found")
-            return
+            return false
         }
 
         val intent = Intent(
@@ -263,15 +317,21 @@ class FinVoiceService : Service() {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
 
-        startActivity(intent)
+        return try {
+            startActivity(intent)
+            true
+        } catch (e: Exception) {
+            showMessage("Could not open dialer")
+            false
+        }
     }
 
-    private fun messageContact(name: String) {
+    private fun messageContact(name: String): Boolean {
         val number = findNumber(name)
 
         if (number == null) {
             showMessage("Contact not found")
-            return
+            return false
         }
 
         val intent = Intent(
@@ -282,7 +342,13 @@ class FinVoiceService : Service() {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
 
-        startActivity(intent)
+        return try {
+            startActivity(intent)
+            true
+        } catch (e: Exception) {
+            showMessage("Could not open messaging app")
+            false
+        }
     }
 
     private fun createNotificationChannel() {
@@ -314,7 +380,7 @@ class FinVoiceService : Service() {
     }
 
     private fun showMessage(message: String) {
-        android.os.Handler(mainLooper).post {
+        mainHandler.post {
             Toast.makeText(
                 this,
                 message,
