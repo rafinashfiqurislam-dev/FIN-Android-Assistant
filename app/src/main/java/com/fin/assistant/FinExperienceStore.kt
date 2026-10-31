@@ -15,10 +15,16 @@ data class FinExperience(
 )
 
 class FinExperienceStore(context: Context) :
-    SQLiteOpenHelper(context.applicationContext, "fin_experience.db", null, 1) {
+    SQLiteOpenHelper(
+        context.applicationContext,
+        "fin_experience.db",
+        null,
+        1
+    ) {
 
     override fun onCreate(db: SQLiteDatabase) {
-        db.execSQL("""
+        db.execSQL(
+            """
             CREATE TABLE experiences (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 transcript TEXT NOT NULL,
@@ -27,9 +33,11 @@ class FinExperienceStore(context: Context) :
                 correction TEXT DEFAULT '',
                 created_at INTEGER NOT NULL
             )
-        """.trimIndent())
+            """.trimIndent()
+        )
 
-        db.execSQL("""
+        db.execSQL(
+            """
             CREATE TABLE learned_rules (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 trigger_text TEXT NOT NULL,
@@ -40,7 +48,8 @@ class FinExperienceStore(context: Context) :
                 updated_at INTEGER NOT NULL,
                 UNIQUE(trigger_text, intent)
             )
-        """.trimIndent())
+            """.trimIndent()
+        )
     }
 
     override fun onUpgrade(
@@ -48,7 +57,7 @@ class FinExperienceStore(context: Context) :
         oldVersion: Int,
         newVersion: Int
     ) {
-        // Future database migrations.
+        // Preserve existing learning data.
     }
 
     @Synchronized
@@ -68,7 +77,11 @@ class FinExperienceStore(context: Context) :
             put("created_at", System.currentTimeMillis())
         }
 
-        return writableDatabase.insert("experiences", null, values)
+        return writableDatabase.insert(
+            "experiences",
+            null,
+            values
+        )
     }
 
     @Synchronized
@@ -88,7 +101,7 @@ class FinExperienceStore(context: Context) :
             FROM learned_rules
             WHERE trigger_text = ? AND intent = ?
             """.trimIndent(),
-            arrayOf(key, intent)
+            arrayOf(key.take(300), intent.take(100))
         ).use { cursor ->
             if (cursor.moveToFirst()) {
                 cursor.getInt(0) to cursor.getInt(1)
@@ -99,7 +112,8 @@ class FinExperienceStore(context: Context) :
         val successes = (old?.second ?: 0) +
             if (successful) 1 else 0
 
-        val confidence = (successes + 1.0) / (evidence + 2.0)
+        val confidence =
+            (successes + 1.0) / (evidence + 2.0)
 
         val values = ContentValues().apply {
             put("trigger_text", key.take(300))
@@ -152,7 +166,9 @@ class FinExperienceStore(context: Context) :
         return matches
     }
 
-    fun getRecentExperiences(limit: Int = 20): List<FinExperience> {
+    fun getRecentExperiences(
+        limit: Int = 20
+    ): List<FinExperience> {
         val safeLimit = limit.coerceIn(1, 200)
         val result = mutableListOf<FinExperience>()
 
@@ -183,13 +199,15 @@ class FinExperienceStore(context: Context) :
 
     @Synchronized
     fun clearLearningData() {
-        writableDatabase.beginTransaction()
+        val db = writableDatabase
+
+        db.beginTransaction()
         try {
-            writableDatabase.delete("experiences", null, null)
-            writableDatabase.delete("learned_rules", null, null)
-            writableDatabase.setTransactionSuccessful()
+            db.delete("experiences", null, null)
+            db.delete("learned_rules", null, null)
+            db.setTransactionSuccessful()
         } finally {
-            writableDatabase.endTransaction()
+            db.endTransaction()
         }
     }
     }
