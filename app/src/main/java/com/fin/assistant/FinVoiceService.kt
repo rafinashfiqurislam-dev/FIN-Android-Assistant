@@ -33,6 +33,7 @@ class FinVoiceService : Service() {
     private val mainHandler = Handler(Looper.getMainLooper())
 
     private lateinit var learningEngine: FinLearningEngine
+    private lateinit var commandUnderstanding: FinCommandUnderstanding
 
     private val modelDir =
         "sherpa-onnx-streaming-zipformer-bn-vosk-2026-02-09"
@@ -41,6 +42,7 @@ class FinVoiceService : Service() {
         super.onCreate()
 
         learningEngine = FinLearningEngine(this)
+        commandUnderstanding = FinCommandUnderstanding(learningEngine)
 
         createNotificationChannel()
         startForeground(7, notification())
@@ -93,14 +95,12 @@ class FinVoiceService : Service() {
             "Microphone configuration unavailable"
         }
 
-        val bufferSize = maxOf(minBuffer, 16000 * 2)
-
         val recorder = AudioRecord(
             MediaRecorder.AudioSource.MIC,
             16000,
             AudioFormat.CHANNEL_IN_MONO,
             AudioFormat.ENCODING_PCM_16BIT,
-            bufferSize
+            maxOf(minBuffer, 16000 * 2)
         )
 
         require(recorder.state == AudioRecord.STATE_INITIALIZED) {
@@ -117,13 +117,16 @@ class FinVoiceService : Service() {
     }
 
     private fun processAudio(recorder: AudioRecord) {
-        val stream = recognizer?.createStream() ?: return
+        val engine = recognizer ?: return
+        val stream = engine.createStream()
 
         val shortBuffer = ShortArray(1600)
         val floatBuffer = FloatArray(1600)
 
         try {
-            while (isRunning && !Thread.currentThread().isInterrupted) {
+            while (isRunning &&
+                !Thread.currentThread().isInterrupted
+            ) {
                 val count = recorder.read(
                     shortBuffer,
                     0,
@@ -141,14 +144,13 @@ class FinVoiceService : Service() {
                     16000
                 )
 
-                val engine = recognizer ?: break
-
                 while (engine.isReady(stream)) {
                     engine.decode(stream)
                 }
 
                 if (engine.isEndpoint(stream)) {
-                    val command = engine.getResult(stream).text.trim()
+                    val command =
+                        engine.getResult(stream).text.trim()
 
                     if (command.isNotBlank()) {
                         mainHandler.post {
@@ -162,7 +164,9 @@ class FinVoiceService : Service() {
                 }
             }
         } catch (e: Exception) {
-            showMessage("Voice processing error: ${e.message}")
+            if (isRunning) {
+                showMessage("Voice processing error: ${e.message}")
+            }
         } finally {
             stream.release()
         }
@@ -170,6 +174,11 @@ class FinVoiceService : Service() {
 
     private fun handleCommand(raw: String) {
         val text = raw.lowercase().trim()
+
+        if (text.isBlank()) return
+
+        // Use the command understanding engine.
+        val understood = commandUnderstanding.understand(raw)
 
         val apps = mapOf(
             "facebook" to "com.facebook.katana",
@@ -179,82 +188,123 @@ class FinVoiceService : Service() {
             "whatsapp" to "com.whatsapp",
             "হোয়াটসঅ্যাপ" to "com.whatsapp",
             "messenger" to "com.facebook.orca",
-            "মেসেঞ্জার" to "com.facebook.orca"
+            "মেসেঞ্জার" to "com.facebook.orca",
+            "youtube" to "com.google.android.youtube",
+            "ইউটিউব" to "com.google.android.youtube",
+            "chrome" to "com.android.chrome",
+            "ক্রোম" to "com.android.chrome",
+            "x" to "com.twitter.android",
+            "chatgpt" to "com.openai.chatgpt",
+            "গুগল" to "com.google.android.googlequicksearchbox",
+            "google" to "com.google.android.googlequicksearchbox",
+            "play store" to "com.android.vending"
         )
 
-        var intentName = "UNKNOWN"
-        var successful = false
+        val openVerb = containsAny(
+            text,
+            "open", "খোলো", "খুলে দাও", "চালু", "ওপেন"
+        )
+
+        val callVerb = containsAny(
+            text, "call", "কল", "ফোন করো", "ফোন দাও"
+        )
+
+        val messageVerb = containsAny(
+            text, "message", "মেসেজ", "বার্তা", "এসএমএস"
+        )
 
         val app = apps.entries.firstOrNull {
             text.contains(it.key)
         }
 
-        if (app != null &&
-            (text.contains("open") ||
-             text.contains("খোলো") ||
-             text.contains("চালু"))) {
+        var intentName = understood.intent
+        var successful = false
 
-            intentName = "OPEN_APP"
+        when (intentName) {
 
-            val launch = packageManager
-                .getLaunchIntentForPackage(app.value)
-
-            if (launch != null) {
-                launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-
-                try {
-                    startActivity(launch)
-                    successful = true
-                } catch (e: Exception) {
-                    showMessage("Could not open app")
+            FinCommandUnderstanding.OPEN_APP -> {
+                // Require an explicit open command and known app.
+                if (!openVerb || app == null) {
+                    recordOutcome(raw, "UNKNOWN", false)
+                    showMessage("Please specify an app to open")
+                    return
                 }
-            } else {
-                showMessage("App not installed")
+
+                val launchIntent =
+                    packageManager.getLaunchIntentForPackage(app.value)
+
+                if (launchIntent == null) {
+                    showMessage("App not installed")
+                } else {
+                    launchIntent.addFlags(
+                        Intent.FLAG_ACTIVITY_NEW_TASK
+                    )
+
+                    successful = try {
+                        startActivity(launchIntent)
+                        true
+                    } catch (e: Exception) {
+                        showMessage("Could not open app")
+                        false
+                    }
+                }
             }
 
-            recordOutcome(raw, intentName, successful)
-            return
+            FinCommandUnderstanding.CALL_CONTACT -> {
+                // Never open Dialer from a learned label alone.
+                if (!callVerb) {
+                    recordOutcome(raw, "UNKNOWN", false)
+                    showMessage("Please say who you want to call")
+                    return
+                }
+
+                val name = text
+                    .replace("call", "")
+                    .replace("কল", "")
+                    .replace("ফোন করো", "")
+                    .replace("ফোন দাও", "")
+                    .replace("করো", "")
+                    .replace("কর", "")
+                    .trim()
+
+                successful = callContact(name)
+            }
+
+            FinCommandUnderstanding.MESSAGE_CONTACT -> {
+                // Never open SMS from a learned label alone.
+                if (!messageVerb) {
+                    recordOutcome(raw, "UNKNOWN", false)
+                    showMessage("Please specify a contact")
+                    return
+                }
+
+                val name = text
+                    .replace("message", "")
+                    .replace("মেসেজ", "")
+                    .replace("বার্তা", "")
+                    .replace("এসএমএস", "")
+                    .replace("পাঠাও", "")
+                    .replace("করো", "")
+                    .replace("কর", "")
+                    .trim()
+
+                successful = messageContact(name)
+            }
+
+            else -> {
+                intentName = "UNKNOWN"
+                showMessage("Command not understood")
+            }
         }
 
-        if (text.contains("call") || text.contains("কল")) {
-            intentName = "CALL_CONTACT"
+        recordOutcome(raw, intentName, successful)
+    }
 
-            val name = text
-                .replace("call", "")
-                .replace("কল", "")
-                .replace("করো", "")
-                .replace("কর", "")
-                .trim()
-
-            successful = callContact(name)
-
-            recordOutcome(raw, intentName, successful)
-            return
-        }
-
-        if (text.contains("message") ||
-            text.contains("মেসেজ") ||
-            text.contains("বার্তা")) {
-
-            intentName = "MESSAGE_CONTACT"
-
-            val name = text
-                .replace("message", "")
-                .replace("মেসেজ", "")
-                .replace("বার্তা", "")
-                .replace("পাঠাও", "")
-                .replace("করো", "")
-                .replace("কর", "")
-                .trim()
-
-            successful = messageContact(name)
-
-            recordOutcome(raw, intentName, successful)
-            return
-        }
-
-        recordOutcome(raw, intentName, false)
-        showMessage("Command not understood")
+    private fun containsAny(
+        text: String,
+        vararg words: String
+    ): Boolean {
+        return words.any { text.contains(it) }
     }
 
     private fun recordOutcome(
@@ -288,7 +338,6 @@ class FinVoiceService : Service() {
             null,
             null
         )?.use { cursor ->
-
             while (cursor.moveToNext()) {
                 val number = cursor.getString(0)
                 val name = cursor.getString(1).orEmpty()
