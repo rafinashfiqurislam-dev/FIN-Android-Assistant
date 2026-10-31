@@ -210,5 +210,3 @@ class FinExperienceStore(context: Context) :
             db.endTransaction()
         }
     }
-    }
-    
