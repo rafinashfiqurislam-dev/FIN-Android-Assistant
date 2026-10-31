@@ -27,7 +27,7 @@ class FinVoiceService : Service() {
 
     private var audioRecord: AudioRecord? = null
     private var recognizer: OnlineRecognizer? = null
-    private var isRunning = false
+    @Volatile private var isRunning = false
     private var audioThread: Thread? = null
 
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -104,12 +104,13 @@ class FinVoiceService : Service() {
         )
 
         require(recorder.state == AudioRecord.STATE_INITIALIZED) {
+            recorder.release()
             "Microphone initialization failed"
         }
 
         audioRecord = recorder
-        isRunning = true
         recorder.startRecording()
+        isRunning = true
 
         audioThread = thread(name = "FIN-Offline-ASR") {
             processAudio(recorder)
@@ -124,7 +125,8 @@ class FinVoiceService : Service() {
         val floatBuffer = FloatArray(1600)
 
         try {
-            while (isRunning &&
+            while (
+                isRunning &&
                 !Thread.currentThread().isInterrupted
             ) {
                 val count = recorder.read(
@@ -133,7 +135,10 @@ class FinVoiceService : Service() {
                     shortBuffer.size
                 )
 
-                if (count <= 0) continue
+                if (count <= 0) {
+                    if (!isRunning) break
+                    continue
+                }
 
                 for (i in 0 until count) {
                     floatBuffer[i] = shortBuffer[i] / 32768.0f
@@ -168,19 +173,38 @@ class FinVoiceService : Service() {
                 showMessage("Voice processing error: ${e.message}")
             }
         } finally {
-            stream.release()
+            try {
+                stream.release()
+            } catch (_: Exception) {
+            }
+
+            if (!isRunning) {
+                releaseRecognizerSafely(engine)
+            }
+        }
+    }
+
+    private fun releaseRecognizerSafely(
+        engine: OnlineRecognizer
+    ) {
+        synchronized(this) {
+            if (recognizer === engine) {
+                recognizer = null
+                try {
+                    engine.release()
+                } catch (_: Exception) {
+                }
+            }
         }
     }
 
     private fun handleCommand(raw: String) {
         val text = raw.lowercase().trim()
-
         if (text.isBlank()) return
 
-        // Use the command understanding engine.
         val understood = commandUnderstanding.understand(raw)
 
-        val apps = mapOf(
+        val apps = listOf(
             "facebook" to "com.facebook.katana",
             "ফেসবুক" to "com.facebook.katana",
             "instagram" to "com.instagram.android",
@@ -193,37 +217,50 @@ class FinVoiceService : Service() {
             "ইউটিউব" to "com.google.android.youtube",
             "chrome" to "com.android.chrome",
             "ক্রোম" to "com.android.chrome",
-            "x" to "com.twitter.android",
+            "twitter" to "com.twitter.android",
+            "এক্স" to "com.twitter.android",
             "chatgpt" to "com.openai.chatgpt",
-            "গুগল" to "com.google.android.googlequicksearchbox",
+            "চ্যাটজিপিটি" to "com.openai.chatgpt",
             "google" to "com.google.android.googlequicksearchbox",
-            "play store" to "com.android.vending"
+            "গুগল" to "com.google.android.googlequicksearchbox",
+            "play store" to "com.android.vending",
+            "প্লে স্টোর" to "com.android.vending"
         )
 
         val openVerb = containsAny(
             text,
-            "open", "খোলো", "খুলে দাও", "চালু", "ওপেন"
+            "open",
+            "খোলো",
+            "খুলে দাও",
+            "চালু",
+            "ওপেন"
         )
 
         val callVerb = containsAny(
-            text, "call", "কল", "ফোন করো", "ফোন দাও"
+            text,
+            "call",
+            "কল",
+            "ফোন করো",
+            "ফোন দাও"
         )
 
         val messageVerb = containsAny(
-            text, "message", "মেসেজ", "বার্তা", "এসএমএস"
+            text,
+            "message",
+            "মেসেজ",
+            "বার্তা",
+            "এসএমএস"
         )
 
-        val app = apps.entries.firstOrNull {
-            text.contains(it.key)
+        val app = apps.firstOrNull {
+            containsPhrase(text, it.first)
         }
 
         var intentName = understood.intent
         var successful = false
 
         when (intentName) {
-
             FinCommandUnderstanding.OPEN_APP -> {
-                // Require an explicit open command and known app.
                 if (!openVerb || app == null) {
                     recordOutcome(raw, "UNKNOWN", false)
                     showMessage("Please specify an app to open")
@@ -231,7 +268,7 @@ class FinVoiceService : Service() {
                 }
 
                 val launchIntent =
-                    packageManager.getLaunchIntentForPackage(app.value)
+                    packageManager.getLaunchIntentForPackage(app.second)
 
                 if (launchIntent == null) {
                     showMessage("App not installed")
@@ -243,7 +280,7 @@ class FinVoiceService : Service() {
                     successful = try {
                         startActivity(launchIntent)
                         true
-                    } catch (e: Exception) {
+                    } catch (_: Exception) {
                         showMessage("Could not open app")
                         false
                     }
@@ -251,42 +288,42 @@ class FinVoiceService : Service() {
             }
 
             FinCommandUnderstanding.CALL_CONTACT -> {
-                // Never open Dialer from a learned label alone.
                 if (!callVerb) {
                     recordOutcome(raw, "UNKNOWN", false)
                     showMessage("Please say who you want to call")
                     return
                 }
 
-                val name = text
-                    .replace("call", "")
-                    .replace("কল", "")
-                    .replace("ফোন করো", "")
-                    .replace("ফোন দাও", "")
-                    .replace("করো", "")
-                    .replace("কর", "")
-                    .trim()
+                val name = removeCommandWords(
+                    text,
+                    "call",
+                    "কল",
+                    "ফোন করো",
+                    "ফোন দাও",
+                    "করো",
+                    "কর"
+                )
 
                 successful = callContact(name)
             }
 
             FinCommandUnderstanding.MESSAGE_CONTACT -> {
-                // Never open SMS from a learned label alone.
                 if (!messageVerb) {
                     recordOutcome(raw, "UNKNOWN", false)
                     showMessage("Please specify a contact")
                     return
                 }
 
-                val name = text
-                    .replace("message", "")
-                    .replace("মেসেজ", "")
-                    .replace("বার্তা", "")
-                    .replace("এসএমএস", "")
-                    .replace("পাঠাও", "")
-                    .replace("করো", "")
-                    .replace("কর", "")
-                    .trim()
+                val name = removeCommandWords(
+                    text,
+                    "message",
+                    "মেসেজ",
+                    "বার্তা",
+                    "এসএমএস",
+                    "পাঠাও",
+                    "করো",
+                    "কর"
+                )
 
                 successful = messageContact(name)
             }
@@ -298,6 +335,37 @@ class FinVoiceService : Service() {
         }
 
         recordOutcome(raw, intentName, successful)
+    }
+
+    private fun containsPhrase(
+        text: String,
+        phrase: String
+    ): Boolean {
+        val escaped = Regex.escape(phrase)
+
+        val pattern = if (phrase.any { it in 'a'..'z' || it in 'A'..'Z' }) {
+            Regex(
+                "(?<![a-z0-9])$escaped(?![a-z0-9])",
+                RegexOption.IGNORE_CASE
+            )
+        } else {
+            Regex("(^|\\s)$escaped($|\\s|[।,.!?])")
+        }
+
+        return pattern.containsMatchIn(text)
+    }
+
+    private fun removeCommandWords(
+        text: String,
+        vararg words: String
+    ): String {
+        var result = text
+
+        words.sortedByDescending { it.length }.forEach { word ->
+            result = result.replace(word, " ")
+        }
+
+        return result.trim()
     }
 
     private fun containsAny(
@@ -318,7 +386,7 @@ class FinVoiceService : Service() {
                 detectedIntent = intent,
                 successful = successful
             )
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             showMessage("Learning storage error")
         }
     }
@@ -369,7 +437,7 @@ class FinVoiceService : Service() {
         return try {
             startActivity(intent)
             true
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             showMessage("Could not open dialer")
             false
         }
@@ -394,7 +462,7 @@ class FinVoiceService : Service() {
         return try {
             startActivity(intent)
             true
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             showMessage("Could not open messaging app")
             false
         }
@@ -447,19 +515,33 @@ class FinVoiceService : Service() {
     override fun onDestroy() {
         isRunning = false
 
-        audioRecord?.let {
-            try {
-                it.stop()
-                it.release()
-            } catch (_: Exception) {
-            }
+        val recorder = audioRecord
+        audioRecord = null
+
+        try {
+            recorder?.stop()
+        } catch (_: Exception) {
         }
 
-        audioRecord = null
         audioThread?.interrupt()
 
-        recognizer?.release()
-        recognizer = null
+        try {
+            audioThread?.join(1500)
+        } catch (_: InterruptedException) {
+            Thread.currentThread().interrupt()
+        }
+
+        try {
+            recorder?.release()
+        } catch (_: Exception) {
+        }
+
+        val worker = audioThread
+        if (worker == null || !worker.isAlive) {
+            recognizer?.let {
+                releaseRecognizerSafely(it)
+            }
+        }
 
         super.onDestroy()
     }
