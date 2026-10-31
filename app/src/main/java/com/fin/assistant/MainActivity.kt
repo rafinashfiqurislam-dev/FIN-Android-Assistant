@@ -1,3 +1,4 @@
+
 package com.fin.assistant
 
 import android.Manifest
@@ -33,6 +34,7 @@ class MainActivity : Activity() {
 
     companion object {
         private const val PERMISSION_REQUEST_CODE = 501
+        private const val NOTIFICATION_REQUEST_CODE = 502
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -170,7 +172,22 @@ class MainActivity : Activity() {
             return
         }
 
-        startFinService()
+        requestNotificationPermissionIfNeeded()
+    }
+
+    private fun requestNotificationPermissionIfNeeded() {
+        if (
+            Build.VERSION.SDK_INT >= 33 &&
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            requestPermissions(
+                arrayOf(Manifest.permission.POST_NOTIFICATIONS),
+                NOTIFICATION_REQUEST_CODE
+            )
+        } else {
+            startFinService()
+        }
     }
 
     private fun startFinService() {
@@ -213,21 +230,29 @@ class MainActivity : Activity() {
             grantResults
         )
 
-        if (requestCode == PERMISSION_REQUEST_CODE) {
-            refreshPermissions()
+        when (requestCode) {
+            PERMISSION_REQUEST_CODE -> {
+                refreshPermissions()
 
-            val allGranted = requiredPermissions.all {
-                checkSelfPermission(it) == PackageManager.PERMISSION_GRANTED
+                val allGranted = requiredPermissions.all {
+                    checkSelfPermission(it) ==
+                        PackageManager.PERMISSION_GRANTED
+                }
+
+                if (allGranted) {
+                    requestNotificationPermissionIfNeeded()
+                } else {
+                    Toast.makeText(
+                        this,
+                        "Microphone and Contacts permissions are required for FIN.",
+                        Toast.LENGTH_LONG
+                    ).show()
+                }
             }
 
-            if (allGranted) {
+            NOTIFICATION_REQUEST_CODE -> {
+                refreshPermissions()
                 startFinService()
-            } else {
-                Toast.makeText(
-                    this,
-                    "Microphone and Contacts permissions are required for FIN.",
-                    Toast.LENGTH_LONG
-                ).show()
             }
         }
     }
