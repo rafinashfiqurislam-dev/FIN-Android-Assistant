@@ -6,8 +6,8 @@ import android.content.Context
 /**
  * FIN's experience-based learning coordinator.
  *
- * Learns from explicit corrections and confirmed outcomes.
- * A single observation never becomes a trusted rule.
+ * Stores command outcomes and learns only from supported,
+ * explicit user corrections.
  */
 class FinLearningEngine(context: Context) {
 
@@ -29,43 +29,46 @@ class FinLearningEngine(context: Context) {
         successful: Boolean
     ): LearningResult {
 
-        if (userCommand.isBlank() || detectedIntent.isBlank()) {
-            return LearningResult(
-                false, 0.0, false,
-                "Command information is incomplete."
+        val command = userCommand.trim()
+        val intent = detectedIntent.trim()
+
+        if (command.isEmpty() || intent.isEmpty()) {
+            return result(
+                false,
+                message = "Command information is incomplete."
             )
         }
 
         val outcome = if (successful) "SUCCESS" else "FAILURE"
 
-        val savedId = store.recordExperience(
-            transcript = userCommand,
-            intent = detectedIntent,
-            outcome = outcome
-        )
+        val savedId = try {
+            store.recordExperience(
+                transcript = command,
+                intent = intent,
+                outcome = outcome
+            )
+        } catch (_: Exception) {
+            -1L
+        }
 
         if (savedId < 0) {
-            return LearningResult(
-                false, 0.0, false,
-                "Experience could not be saved."
+            return result(
+                false,
+                message = "Experience could not be saved."
             )
         }
 
-        return LearningResult(
-            true, 0.0, false,
-            "Experience recorded."
+        return result(
+            true,
+            message = "Experience recorded."
         )
     }
 
     /**
-     * Learn from an explicit user correction.
+     * Learn only from supported explicit corrections.
      *
-     * Example:
-     * Original command: "ইউটিউবে গজল চালাও"
-     * Corrected intent: "SEARCH_YOUTUBE"
-     *
-     * The corrected rule needs repeated evidence
-     * before it becomes trusted.
+     * Supported intents:
+     * OPEN_APP, CALL_CONTACT, MESSAGE_CONTACT
      */
     fun learnFromCorrection(
         originalCommand: String,
@@ -73,34 +76,55 @@ class FinLearningEngine(context: Context) {
     ): LearningResult {
 
         val command = originalCommand.trim()
-        val intent = correctedIntent.trim()
+            .lowercase()
+            .replace(Regex("\\s+"), " ")
 
-        if (command.isEmpty() || intent.isEmpty()) {
-            return LearningResult(
-                false, 0.0, false,
-                "Correction information is incomplete."
+        val intent = correctedIntent.trim().uppercase()
+
+        if (command.isBlank()) {
+            return result(
+                false,
+                message = "Original command is required."
             )
         }
 
-        val savedId = store.recordExperience(
-            transcript = command,
-            intent = intent,
-            outcome = "USER_CORRECTION",
-            correction = intent
-        )
+        if (intent !in SUPPORTED_INTENTS) {
+            return result(
+                false,
+                message = "Unsupported correction intent."
+            )
+        }
+
+        val savedId = try {
+            store.recordExperience(
+                transcript = command,
+                intent = intent,
+                outcome = "USER_CORRECTION",
+                correction = intent
+            )
+        } catch (_: Exception) {
+            -1L
+        }
 
         if (savedId < 0) {
-            return LearningResult(
-                false, 0.0, false,
-                "Correction could not be saved."
+            return result(
+                false,
+                message = "Correction could not be saved."
             )
         }
 
-        val confidence = store.recordRuleEvidence(
-            trigger = command,
-            intent = intent,
-            successful = true
-        )
+        val confidence = try {
+            store.recordRuleEvidence(
+                trigger = command,
+                intent = intent,
+                successful = true
+            )
+        } catch (_: Exception) {
+            return result(
+                true,
+                message = "Correction saved, but rule evidence could not be updated."
+            )
+        }
 
         val trusted = confidence >= TRUST_THRESHOLD
 
@@ -117,20 +141,29 @@ class FinLearningEngine(context: Context) {
     }
 
     /**
-     * Search previously learned rules.
+     * Recall a previously trusted learned intent.
      */
     fun recallLearnedIntent(
         currentCommand: String
     ): String? {
 
-        if (currentCommand.isBlank()) return null
+        val command = currentCommand.trim()
+            .lowercase()
+            .replace(Regex("\\s+"), " ")
 
-        val matches = store.findMatchingRules(
-            text = currentCommand,
-            minimumConfidence = TRUST_THRESHOLD
-        )
+        if (command.isBlank()) return null
 
-        return matches.firstOrNull()?.second
+        return try {
+            store.findMatchingRules(
+                text = command,
+                minimumConfidence = TRUST_THRESHOLD
+            )
+                .firstOrNull()
+                ?.second
+                ?.takeIf { it in SUPPORTED_INTENTS }
+        } catch (_: Exception) {
+            null
+        }
     }
 
     /**
@@ -139,7 +172,11 @@ class FinLearningEngine(context: Context) {
     fun getRecentHistory(
         limit: Int = 20
     ): List<FinExperience> {
-        return store.getRecentExperiences(limit)
+        return try {
+            store.getRecentExperiences(limit)
+        } catch (_: Exception) {
+            emptyList()
+        }
     }
 
     /**
@@ -149,7 +186,25 @@ class FinLearningEngine(context: Context) {
         store.clearLearningData()
     }
 
+    private fun result(
+        saved: Boolean,
+        confidence: Double = 0.0,
+        trusted: Boolean = false,
+        message: String
+    ) = LearningResult(
+        saved = saved,
+        confidence = confidence,
+        trusted = trusted,
+        message = message
+    )
+
     companion object {
         private const val TRUST_THRESHOLD = 0.75
+
+        private val SUPPORTED_INTENTS = setOf(
+            "OPEN_APP",
+            "CALL_CONTACT",
+            "MESSAGE_CONTACT"
+        )
     }
 }
